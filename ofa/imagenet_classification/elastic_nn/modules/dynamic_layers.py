@@ -114,8 +114,8 @@ class DynamicMBConvLayer(MyModule):
 
         self.kernel_size_list = val2list(kernel_size_list)
         self.expand_ratio_list = val2list(expand_ratio_list)
-
-        self.stride = stride
+        self.stride = val2list(stride)
+        
         self.act_func = act_func
         self.use_se = use_se
 
@@ -147,6 +147,8 @@ class DynamicMBConvLayer(MyModule):
         self.active_kernel_size = max(self.kernel_size_list)
         self.active_expand_ratio = max(self.expand_ratio_list)
         self.active_out_channel = max(self.out_channel_list)
+        self.active_stride = max(self.stride)
+        self.active_act_fun = self.act_func
 
     def forward(self, x):
         in_channel = x.size(1)
@@ -156,6 +158,9 @@ class DynamicMBConvLayer(MyModule):
                 make_divisible(round(in_channel * self.active_expand_ratio), MyNetwork.CHANNEL_DIVISIBLE)
 
         self.depth_conv.conv.active_kernel_size = self.active_kernel_size
+        self.depth_conv.conv.active_stride = self.active_stride
+        self.depth_conv.conv.act_func = self.active_act_fun
+        
         self.point_linear.conv.active_out_channel = self.active_out_channel
 
         if self.inverted_bottleneck is not None:
@@ -218,6 +223,7 @@ class DynamicMBConvLayer(MyModule):
             )
             copy_bn(sub_layer.inverted_bottleneck.bn, self.inverted_bottleneck.bn.bn)
 
+       
         sub_layer.depth_conv.conv.weight.data.copy_(
             self.depth_conv.conv.get_active_filter(middle_channel, self.active_kernel_size).data
         )
@@ -252,7 +258,7 @@ class DynamicMBConvLayer(MyModule):
             'in_channels': in_channel,
             'out_channels': self.active_out_channel,
             'kernel_size': self.active_kernel_size,
-            'stride': self.stride,
+            'stride': self.active_stride,
             'expand_ratio': self.active_expand_ratio,
             'mid_channels': self.active_middle_channel(in_channel),
             'act_func': self.act_func,
