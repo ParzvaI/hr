@@ -16,7 +16,7 @@ __all__ = ['DynamicSeparableConv2d', 'DynamicConv2d', 'DynamicGroupConv2d',
 class DynamicSeparableConv2d(nn.Module):
 	KERNEL_TRANSFORM_MODE = 1  # None or 1
 
-	def __init__(self, max_in_channels, kernel_size_list, stride=1, dilation=1):
+	def __init__(self, max_in_channels, kernel_size_list, stride, dilation=1):
 		super(DynamicSeparableConv2d, self).__init__()
 
 		self.max_in_channels = max_in_channels
@@ -25,7 +25,7 @@ class DynamicSeparableConv2d(nn.Module):
 		self.dilation = dilation
 
 		self.conv = nn.Conv2d(
-			self.max_in_channels, self.max_in_channels, max(self.kernel_size_list), self.stride,
+			self.max_in_channels, self.max_in_channels, max(self.kernel_size_list), max(self.stride),
 			groups=self.max_in_channels, bias=False,
 		)
 
@@ -52,6 +52,7 @@ class DynamicSeparableConv2d(nn.Module):
 
 		start, end = sub_filter_start_end(max_kernel_size, kernel_size)
 		filters = self.conv.weight[:out_channel, :in_channel, start:end, start:end]
+		
 		if self.KERNEL_TRANSFORM_MODE is not None and kernel_size < max_kernel_size:
 			start_filter = self.conv.weight[:out_channel, :in_channel, :, :]  # start with max kernel
 			for i in range(len(self._ks_set) - 1, 0, -1):
@@ -71,6 +72,7 @@ class DynamicSeparableConv2d(nn.Module):
 				_input_filter = _input_filter.view(filters.size(0), filters.size(1), target_ks, target_ks)
 				start_filter = _input_filter
 			filters = start_filter
+		
 		return filters
 
 	def forward(self, x, kernel_size=None):
@@ -83,7 +85,7 @@ class DynamicSeparableConv2d(nn.Module):
 		padding = get_same_padding(kernel_size)
 		filters = self.conv.weight_standardization(filters) if isinstance(self.conv, MyConv2d) else filters
 		y = F.conv2d(
-			x, filters, None, self.stride, padding, self.dilation, in_channel
+			x, filters, None, max(self.stride), padding, self.dilation, in_channel
 		)
 		return y
 

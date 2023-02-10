@@ -16,31 +16,38 @@ __all__ = ['OFAMobileNetV3']
 class OFAMobileNetV3(MobileNetV3):
 
 	def __init__(self, n_classes=1000, bn_param=(0.1, 1e-5), dropout_rate=0.1, base_stage_width=None, width_mult=1.0,
-	             ks_list=3, expand_ratio_list=6, depth_list=4):
+	             ks_list=3, expand_ratio_list=6, depth_list=4,stride_list=2,act_stages='relu', num_filters=6):
 
 		self.width_mult = width_mult
 		self.ks_list = val2list(ks_list, 1)
 		self.expand_ratio_list = val2list(expand_ratio_list, 1)
 		self.depth_list = val2list(depth_list, 1)
-
+		self.stride_list = val2list(stride_list, 5)
+		self.act_stages = val2list(act_stages, 5)
+		self.num_filters = val2list(num_filters, 6)
+		
+		stride_stages = [1]+self.stride_list
 		self.ks_list.sort()
 		self.expand_ratio_list.sort()
 		self.depth_list.sort()
-
-		base_stage_width = [16, 16, 24, 40, 80, 112, 160, 960, 1280]
+		
+		base_stage_width = [16] + self.num_filters + [960, 1280]
+		
+		# base_stage_width = [16, 16, 24, 40, 80, 112, 160, 960, 1280]
 
 		final_expand_width = make_divisible(base_stage_width[-2] * self.width_mult, MyNetwork.CHANNEL_DIVISIBLE)
 		last_channel = make_divisible(base_stage_width[-1] * self.width_mult, MyNetwork.CHANNEL_DIVISIBLE)
 
-		stride_stages = [1, 2, 2, 2, 1, 2]
-		act_stages = ['relu', 'relu', 'relu', 'h_swish', 'h_swish', 'h_swish']
+		# stride_stages = [1, 2, 2, 2, 1, 2]
+		# act_stages = ['relu', 'relu', 'relu', 'h_swish', 'h_swish', 'h_swish']
+
 		se_stages = [False, False, True, False, True, True]
 		n_block_list = [1] + [max(self.depth_list)] * 5
 		width_list = []
 		for base_width in base_stage_width[:-2]:
 			width = make_divisible(base_width * self.width_mult, MyNetwork.CHANNEL_DIVISIBLE)
 			width_list.append(width)
-
+		
 		input_channel, first_block_dim = width_list[0], width_list[1]
 		# first conv layer
 		first_conv = ConvLayer(3, input_channel, kernel_size=3, stride=2, act_func='h_swish')
@@ -61,6 +68,7 @@ class OFAMobileNetV3(MobileNetV3):
 
 		for width, n_block, s, act_func, use_se in zip(width_list[2:], n_block_list[1:],
 		                                               stride_stages[1:], act_stages[1:], se_stages[1:]):
+			
 			self.block_group_info.append([_block_index + i for i in range(n_block)])
 			_block_index += n_block
 
@@ -73,14 +81,15 @@ class OFAMobileNetV3(MobileNetV3):
 				mobile_inverted_conv = DynamicMBConvLayer(
 					in_channel_list=val2list(feature_dim), out_channel_list=val2list(output_channel),
 					kernel_size_list=ks_list, expand_ratio_list=expand_ratio_list,
-					stride=stride, act_func=act_func, use_se=use_se,
+					stride=stride_stages, act_func=act_func, use_se=use_se,
 				)
-				if stride == 1 and feature_dim == output_channel:
-					shortcut = IdentityLayer(feature_dim, feature_dim)
-				else:
-					shortcut = None
+				# if stride == 1 and feature_dim == output_channel:
+				# 	shortcut = IdentityLayer(feature_dim, feature_dim)
+				# else:
+				shortcut = None
 				blocks.append(ResidualBlock(mobile_inverted_conv, shortcut))
 				feature_dim = output_channel
+		
 		# final expand layer, feature mix layer & classifier
 		final_expand_layer = ConvLayer(feature_dim, final_expand_width, kernel_size=1, act_func='h_swish')
 		feature_mix_layer = ConvLayer(
@@ -192,20 +201,27 @@ class OFAMobileNetV3(MobileNetV3):
 	def set_max_net(self):
 		self.set_active_subnet(ks=max(self.ks_list), e=max(self.expand_ratio_list), d=max(self.depth_list))
 
-	def set_active_subnet(self, ks=None, e=None, d=None, **kwargs):
+	def set_active_subnet(self, ks=None, e=None, d=None,s=None,a=None, **kwargs):
 		ks = val2list(ks, len(self.blocks) - 1)
 		expand_ratio = val2list(e, len(self.blocks) - 1)
 		depth = val2list(d, len(self.block_group_info))
+		stride = val2list(s, len(self.blocks) - 1)
+		act_stages = val2list(a, len(self.blocks) - 1)
 
-		for block, k, e in zip(self.blocks[1:], ks, expand_ratio):
+		for block, k, e, s, a in zip(self.blocks[1:], ks, expand_ratio, stride, act_stages):
 			if k is not None:
 				block.conv.active_kernel_size = k
 			if e is not None:
 				block.conv.active_expand_ratio = e
+			if s is not None:
+				block.conv.active_stride = s	
+			if a is not None:
+				block.conv.active_act_func = a			
 
 		for i, d in enumerate(depth):
 			if d is not None:
 				self.runtime_depth[i] = min(len(self.block_group_info[i]), d)
+	
 
 	def set_constraint(self, include_list, constraint_type='depth'):
 		if constraint_type == 'depth':
@@ -272,6 +288,7 @@ class OFAMobileNetV3(MobileNetV3):
 
 		input_channel = blocks[0].conv.out_channels
 		# blocks
+		
 		for stage_id, block_idx in enumerate(self.block_group_info):
 			depth = self.runtime_depth[stage_id]
 			active_idx = block_idx[:depth]
